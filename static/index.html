@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Airlock</title>
+    <style>
+        @font-face {
+            font-family: 'Phantom Sans';
+            src: url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff') format('woff'),
+                 url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff2') format('woff2');
+            font-weight: bold;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f4f4f4;
+            color: #333;
+            flex-direction: column;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 500px;
+        }
+
+        h1, h2 {
+            font-family: 'Phantom Sans', sans-serif;
+            margin-top: 0;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #ec3750;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Phantom Sans', sans-serif;
+            font-size: 1rem;
+            width: 100%;
+        }
+
+        button:hover {
+            background-color: #d12e43;
+        }
+
+        #output {
+            margin-top: 20px;
+            background: #222;
+            color: #eee;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+        
+        .user-info {
+            text-align: right;
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        footer {
+            margin-top: 40px;
+            color: #666;
+            font-size: 0.9rem;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        
+        .dot {
+            height: 6px;
+            width: 6px;
+            background-color: #ec3750;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        #login-info-container {
+             display: inline-flex;
+             align-items: center;
+             gap: 10px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container" id="login-section">
+        <h1>Airlock</h1>
+        <p>Please log in with Hack Club to continue.</p>
+        <button onclick="window.location.href='/login'">Login with Hack Club</button>
+    </div>
+
+    <div class="container hidden" id="app-section">
+        <div class="user-info" id="user-display"></div>
+        <h1>Airlock</h1>
+        <p>Enter a GitHub repository URL to start a review session.</p>
+        <form id="session-form">
+            <input type="text" id="repo-url" placeholder="https://github.com/owner/repo" required>
+            <button type="submit">Start Session</button>
+        </form>
+        <div id="output"></div>
+    </div>
+    
+    <footer id="main-footer" class="hidden">
+        <span>Airlock Private Beta</span>
+        <span class="dot"></span>
+        <span>Made with love by Carlos</span>
+        <span id="login-info-container" class="hidden">
+            <span class="dot"></span>
+            <span id="footer-login-info"></span>
+        </span>
+    </footer>
+
+    <script>
+        const loginSection = document.getElementById('login-section');
+        const appSection = document.getElementById('app-section');
+        const sessionForm = document.getElementById('session-form');
+        const outputDiv = document.getElementById('output');
+        const userDisplay = document.getElementById('user-display');
+        const mainFooter = document.getElementById('main-footer');
+        const footerLoginInfo = document.getElementById('footer-login-info');
+        const loginInfoContainer = document.getElementById('login-info-container');
+
+        // Check auth status on load
+        checkAuth();
+
+        async function checkAuth() {
+            try {
+                const res = await fetch('/api/v1/me');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.user) {
+                        footerLoginInfo.innerHTML = `Logged in as <strong>${data.user.name || data.user.email}</strong> (${data.user.slack_id})`;
+                        loginInfoContainer.classList.remove('hidden');
+                        
+                        if (data.user.is_admin) {
+                             footerLoginInfo.innerHTML += ` <a href="/admin" style="margin-left:5px; color:#ec3750;">(Admin)</a>`;
+                        }
+                    }
+                    showApp();
+                } else {
+                    showLogin();
+                }
+            } catch (e) {
+                showLogin();
+            }
+        }
+
+        function showLogin() {
+            loginSection.classList.remove('hidden');
+            appSection.classList.add('hidden');
+            mainFooter.classList.remove('hidden');
+        }
+
+        function showApp() {
+            loginSection.classList.add('hidden');
+            appSection.classList.remove('hidden');
+            mainFooter.classList.remove('hidden');
+
+            const params = new URLSearchParams(window.location.search);
+            const rParam = params.get('r');
+            if (rParam && !document.getElementById('repo-url').value) {
+                document.getElementById('repo-url').value = rParam;
+                sessionForm.requestSubmit();
+            }
+        }
+
+        sessionForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const repoUrl = document.getElementById('repo-url').value;
+            outputDiv.style.display = 'block';
+            outputDiv.textContent = 'Initializing...\n';
+
+            try {
+                const res = await fetch(`/api/v1/getSession?repo_url=${encodeURIComponent(repoUrl)}`);
+                
+                if (res.status === 401) {
+                    alert('Session expired. Please login again.');
+                    window.location.href = '/login';
+                    return;
+                }
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let fullText = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const text = decoder.decode(value);
+                    fullText += text;
+                    outputDiv.textContent += text;
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
+
+                    if (!fullText.includes("OPENED_SESSION")) {
+                         const match = fullText.match(/\[SUCCESS\] Session: (https?:\/\/[^\s]+)/);
+                         if (match) {
+                             const url = match[1];
+                             fullText += " OPENED_SESSION"; 
+                             window.open(url, '_blank');
+                         }
+                    }
+                }
+            } catch (e) {
+                outputDiv.textContent += `\nError: ${e.message}`;
+            }
+        });
+    </script>
+</body>
+</html>

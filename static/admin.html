@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Airlock Admin</title>
+    <style>
+        @font-face {
+            font-family: 'Phantom Sans';
+            src: url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff') format('woff'),
+                 url('https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff2') format('woff2');
+            font-weight: bold;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        body {
+            font-family: sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f4f4f4;
+            color: #333;
+            flex-direction: column;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 600px;
+        }
+
+        h1, h2, h3 {
+            font-family: 'Phantom Sans', sans-serif;
+            margin-top: 0;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #ec3750;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Phantom Sans', sans-serif;
+            font-size: 1rem;
+        }
+
+        button.small {
+             padding: 5px 10px;
+             font-size: 0.8rem;
+        }
+        
+        button.remove {
+            background-color: #333;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .user-list {
+            list-style: none;
+            padding: 0;
+            margin-top: 20px;
+        }
+
+        .user-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .user-item:last-child {
+            border-bottom: none;
+        }
+
+        .add-form {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        footer {
+            margin-top: 40px;
+            color: #666;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Admin Dashboard</h1>
+        <p>Manage authorized users for Airlock.</p>
+
+        <div class="add-form">
+            <input type="text" id="new-slack-id" placeholder="Slack ID (e.g. U123456)">
+            <input type="text" id="new-email" placeholder="Email (optional)">
+            <button onclick="addUser()">Add User</button>
+        </div>
+
+        <h3>Authorized Users</h3>
+        <ul class="user-list" id="user-list">
+            <!-- Users will be populated here -->
+            <li class="user-item">Loading...</li>
+        </ul>
+        
+        <div style="margin-top: 20px;">
+            <a href="/" style="color: #ec3750; text-decoration: none;">&larr; Back to App</a>
+        </div>
+    </div>
+
+    <footer>
+        Airlock Private Beta &bull; Made with love by Carlos
+    </footer>
+
+    <script>
+        const userList = document.getElementById('user-list');
+        const newSlackId = document.getElementById('new-slack-id');
+        const newEmail = document.getElementById('new-email');
+
+        async function fetchUsers() {
+            try {
+                const res = await fetch('/api/v1/admin/users');
+                if (res.status === 401 || res.status === 403) {
+                    window.location.href = '/';
+                    return;
+                }
+                const users = await res.json();
+                renderUsers(users);
+            } catch (e) {
+                userList.innerHTML = '<li class="user-item">Error loading users</li>';
+            }
+        }
+
+        function renderUsers(users) {
+            userList.innerHTML = '';
+            if (users.length === 0) {
+                userList.innerHTML = '<li class="user-item">No users found.</li>';
+                return;
+            }
+            
+            users.forEach(user => {
+                const li = document.createElement('li');
+                li.className = 'user-item';
+                li.innerHTML = `
+                    <span>
+                        <strong>${user.slack_id}</strong>
+                        ${user.email ? `<span style="color:#888; margin-left:10px;">(${user.email})</span>` : ''}
+                    </span>
+                    <button class="small remove" onclick="removeUser('${user.slack_id}')">Remove</button>
+                `;
+                userList.appendChild(li);
+            });
+        }
+
+        async function addUser() {
+            const slackId = newSlackId.value.trim();
+            const email = newEmail.value.trim();
+            
+            if (!slackId) return alert('Slack ID is required');
+
+            try {
+                const res = await fetch('/api/v1/admin/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ slack_id: slackId, email: email })
+                });
+
+                if (res.ok) {
+                    newSlackId.value = '';
+                    newEmail.value = '';
+                    fetchUsers();
+                } else {
+                    const err = await res.json();
+                    alert(err.detail || 'Failed to add user');
+                }
+            } catch (e) {
+                alert('Error adding user');
+            }
+        }
+
+        async function removeUser(slackId) {
+            if (!confirm(`Are you sure you want to remove ${slackId}?`)) return;
+
+            try {
+                const res = await fetch(`/api/v1/admin/users/${slackId}`, {
+                    method: 'DELETE'
+                });
+
+                if (res.ok) {
+                    fetchUsers();
+                } else {
+                    alert('Failed to remove user');
+                }
+            } catch (e) {
+                alert('Error removing user');
+            }
+        }
+
+        // Load users on start
+        fetchUsers();
+    </script>
+</body>
+</html>
