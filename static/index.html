@@ -167,8 +167,18 @@
                         footerLoginInfo.innerHTML = `Logged in as <strong>${data.user.name || data.user.email}</strong> (${data.user.slack_id})`;
                         loginInfoContainer.classList.remove('hidden');
                         
+                        let adminLinks = [];
+                        
                         if (data.user.is_admin) {
-                             footerLoginInfo.innerHTML += ` <a href="/admin" style="margin-left:5px; color:#ec3750;">(Admin)</a>`;
+                             adminLinks.push(`<a href="/admin" style="margin-left:5px; color:#ec3750; text-decoration:none;">(Global Airlock Admin)</a>`);
+                        }
+                        
+                        if (data.user.organization && data.user.organization.admins.includes(data.user.slack_id)) {
+                             adminLinks.push(`<a href="/admin?org=${data.user.organization.id}" style="margin-left:5px; color:#ec3750; text-decoration:none;">(${data.user.organization.name} Admin)</a>`);
+                        }
+                        
+                        if (adminLinks.length > 0) {
+                            footerLoginInfo.innerHTML += " " + adminLinks.join(" ");
                         }
                     }
                     showApp();

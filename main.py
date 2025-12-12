@@ -5,6 +5,8 @@ import asyncio
 import httpx
 import markdown
 import logging
+import uuid
+from cachetools import TTLCache
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response, HTTPException, Depends
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
@@ -46,11 +48,28 @@ slack_client = WebClient(token=SLACK_BOT_TOKEN)
 ADMIN_USERS = os.getenv("ADMIN_USERS", "").split(",")
 # Regular users are stored in JSON
 USERS_FILE = "users.json"
+ORGANIZATIONS_FILE = "organizations.json"
+
+# Caches
+slack_profile_cache = TTLCache(maxsize=1000, ttl=600)  # 10 minutes cache
 
 # Models
 class User(BaseModel):
     slack_id: str
     email: Optional[str] = None
+
+class Organization(BaseModel):
+    id: str
+    name: str
+    kasm_user_id: Optional[str] = None
+    session_limit: int = 10
+    admins: List[str] = []
+    users: List[str] = []
+
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = None
+    kasm_user_id: Optional[str] = None
+    session_limit: Optional[int] = None
 
 # Initialize FastAPI
 app = FastAPI()
@@ -84,6 +103,48 @@ def save_users(users):
     with open(USERS_FILE, 'w') as f:
         json.dump(users, f, indent=2)
 
+def load_organizations():
+    if not os.path.exists(ORGANIZATIONS_FILE):
+        return []
+    try:
+        with open(ORGANIZATIONS_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_organizations(orgs):
+    with open(ORGANIZATIONS_FILE, 'w') as f:
+        json.dump(orgs, f, indent=2)
+
+def get_slack_profile(slack_id: str):
+    if slack_id in slack_profile_cache:
+        return slack_profile_cache[slack_id]
+    
+    try:
+        response = slack_client.users_info(user=slack_id)
+        if response["ok"]:
+            user = response["user"]
+            profile = user.get("profile", {})
+            data = {
+                "id": user["id"],
+                "display_name": profile.get("display_name") or profile.get("real_name") or user["name"],
+                "image": profile.get("image_48"),
+                "image_192": profile.get("image_192")
+            }
+            slack_profile_cache[slack_id] = data
+            return data
+    except Exception as e:
+        logger.error(f"Error fetching Slack profile for {slack_id}: {e}")
+    
+    return {"id": slack_id, "display_name": slack_id, "image": None}
+
+def get_user_organization(slack_id):
+    orgs = load_organizations()
+    for org in orgs:
+        if slack_id in org['admins'] or slack_id in org['users']:
+            return org
+    return None
+
 def is_user_in_channel(user_id):
     try:
         # Initial call to get the first page of members
@@ -115,12 +176,33 @@ def is_user_in_channel(user_id):
 def is_admin(slack_id):
     return slack_id in ADMIN_USERS
 
+def is_org_admin(slack_id, org_id):
+    orgs = load_organizations()
+    for org in orgs:
+        if org['id'] == org_id:
+            return slack_id in org['admins']
+    return False
+
+def is_any_org_admin(slack_id):
+    orgs = load_organizations()
+    for org in orgs:
+        if slack_id in org['admins']:
+            return True
+    return False
+
 def is_authorized(slack_id):
     if is_admin(slack_id):
         return True
+    
+    # Check if in an organization
+    if get_user_organization(slack_id):
+        return True
+
+    # Check regular users list
     users = load_users()
     if any(u['slack_id'] == slack_id for u in users):
         return True
+        
     return is_user_in_channel(slack_id)
 
 def normalize_github_url(url):
@@ -329,7 +411,7 @@ async def analyze_with_ai_data(context, file_contents="", model_id="z-ai/glm-4.6
     Build Tools: maven, gradle
     8. .NET
     SDK: .NET 8.0 SDK
-
+    
     You may use any of the tooling and install your own if needed. 
     Before using any tool, even if it's on the list, you must check if it's installed and if not the script must be able to handle it and install it.
 
@@ -472,7 +554,7 @@ async def analyze_with_ai_data(context, file_contents="", model_id="z-ai/glm-4.6
 
     raise last_exception
 
-async def create_kasm_session_generator(repo_url, repo_name, install_script, help_html, tech_stack):
+async def create_kasm_session_generator(repo_url, repo_name, install_script, help_html, tech_stack, kasm_user_id=None):
     yield "[*] 1. Requesting Session...\n"
 
     payload = {
@@ -485,6 +567,9 @@ async def create_kasm_session_generator(repo_url, repo_name, install_script, hel
             "git_url": repo_url
         }
     }
+
+    if kasm_user_id:
+        payload["user_id"] = kasm_user_id
 
     async with httpx.AsyncClient(verify=False) as client:
         resp = await client.post(f"{KASM_URL}/api/public/request_kasm", json=payload)
@@ -614,6 +699,11 @@ async def get_admin_user(user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
+async def get_org_admin_user(user: dict = Depends(get_current_user)):
+    if is_admin(user['slack_id']) or is_any_org_admin(user['slack_id']):
+        return user
+    raise HTTPException(status_code=403, detail="Organization Admin access required")
+
 # --- Routes ---
 
 @app.get("/")
@@ -661,7 +751,7 @@ async def auth_callback(request: Request):
              return HTMLResponse(
                  """
                  <html>
-                <head>
+                 <head>
                     <title>Airlock | Access Denied</title>
                     <style>
                         body { display: flex; justify-content: center; align-items: center; min-height: 100vh; flex-direction: column; margin: 0; font-family: sans-serif; padding: 40px; text-align: center; }
@@ -703,6 +793,7 @@ async def auth_callback(request: Request):
 
         # Add is_admin flag to session
         user_info['is_admin'] = is_admin(slack_id)
+        user_info['is_org_admin'] = is_any_org_admin(slack_id)
         request.session['user'] = dict(user_info)
 
         return RedirectResponse(url='/')
@@ -717,10 +808,20 @@ async def logout(request: Request):
 
 @app.get("/api/v1/me")
 async def me(user: dict = Depends(get_current_user)):
-    return {"status": "authenticated", "user": user}
+    user_data = dict(user)
+    org = get_user_organization(user['slack_id'])
+    if org:
+        user_data['organization'] = org
+    return {"status": "authenticated", "user": user_data}
 
 @app.get("/api/v1/getSession")
 async def get_session(repo_url: str, user: dict = Depends(get_current_user)):
+    # Determine KASM user ID
+    kasm_user_id = None
+    org = get_user_organization(user['slack_id'])
+    if org:
+        kasm_user_id = org.get('kasm_user_id')
+    
     async def process_stream():
         try:
             # URL Validation & Normalization
@@ -796,7 +897,7 @@ async def get_session(repo_url: str, user: dict = Depends(get_current_user)):
                 yield f"[!] AI Analysis failed: {e}\n"
                 return
 
-            async for msg in create_kasm_session_generator(repo_url_final, context['name'], script, html, tech_stack):
+            async for msg in create_kasm_session_generator(repo_url_final, context['name'], script, html, tech_stack, kasm_user_id=kasm_user_id):
                 yield msg
 
         except Exception as e:
@@ -826,3 +927,120 @@ async def delete_user(slack_id: str, admin: dict = Depends(get_admin_user)):
     users = [u for u in users if u['slack_id'] != slack_id]
     save_users(users)
     return {"status": "deleted"}
+
+# --- Organization API ---
+
+@app.get("/api/v1/admin/organizations")
+async def list_organizations(admin: dict = Depends(get_admin_user)):
+    return load_organizations()
+
+@app.post("/api/v1/admin/organizations")
+async def create_organization(org: Organization, admin: dict = Depends(get_admin_user)):
+    orgs = load_organizations()
+    if any(o['id'] == org.id for o in orgs):
+        raise HTTPException(status_code=400, detail="Organization ID already exists")
+    
+    # Generate ID if not provided (though model requires it currently, better to handle it)
+    if not org.id:
+        org.id = str(uuid.uuid4())
+
+    orgs.append(org.dict())
+    save_organizations(orgs)
+    return {"status": "created", "organization": org}
+
+@app.get("/api/v1/admin/organizations/{org_id}")
+async def get_organization(org_id: str, user: dict = Depends(get_org_admin_user)):
+    # Check permission
+    if not is_admin(user['slack_id']) and not is_org_admin(user['slack_id'], org_id):
+        raise HTTPException(status_code=403, detail="Access denied to this organization")
+
+    orgs = load_organizations()
+    org = next((o for o in orgs if o['id'] == org_id), None)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return org
+
+@app.put("/api/v1/admin/organizations/{org_id}")
+async def update_organization(org_id: str, update: OrganizationUpdate, admin: dict = Depends(get_admin_user)):
+    orgs = load_organizations()
+    for i, o in enumerate(orgs):
+        if o['id'] == org_id:
+            if update.name is not None:
+                o['name'] = update.name
+            if update.kasm_user_id is not None:
+                o['kasm_user_id'] = update.kasm_user_id
+            if update.session_limit is not None:
+                o['session_limit'] = update.session_limit
+            
+            orgs[i] = o
+            save_organizations(orgs)
+            return {"status": "updated", "organization": o}
+            
+    raise HTTPException(status_code=404, detail="Organization not found")
+
+@app.post("/api/v1/admin/organizations/{org_id}/users")
+async def add_org_user(org_id: str, data: dict, user: dict = Depends(get_org_admin_user)):
+    # data: { "slack_id": "...", "role": "admin" | "user" }
+    slack_id = data.get("slack_id")
+    role = data.get("role", "user")
+    
+    if not slack_id:
+        raise HTTPException(status_code=400, detail="slack_id is required")
+
+    # Check permission
+    if not is_admin(user['slack_id']) and not is_org_admin(user['slack_id'], org_id):
+        raise HTTPException(status_code=403, detail="Access denied to this organization")
+
+    orgs = load_organizations()
+    org_idx = next((i for i, o in enumerate(orgs) if o['id'] == org_id), -1)
+    
+    if org_idx == -1:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    org = orgs[org_idx]
+    
+    # Remove from both lists first to ensure no duplicates/conflicts
+    if slack_id in org['admins']:
+        org['admins'].remove(slack_id)
+    if slack_id in org['users']:
+        org['users'].remove(slack_id)
+        
+    if role == 'admin':
+        org['admins'].append(slack_id)
+    else:
+        org['users'].append(slack_id)
+        
+    orgs[org_idx] = org
+    save_organizations(orgs)
+    
+    # Fetch profile for return
+    profile = get_slack_profile(slack_id)
+    return {"status": "added", "role": role, "profile": profile}
+
+@app.delete("/api/v1/admin/organizations/{org_id}/users/{slack_id}")
+async def remove_org_user(org_id: str, slack_id: str, user: dict = Depends(get_org_admin_user)):
+    # Check permission
+    if not is_admin(user['slack_id']) and not is_org_admin(user['slack_id'], org_id):
+        raise HTTPException(status_code=403, detail="Access denied to this organization")
+
+    orgs = load_organizations()
+    org_idx = next((i for i, o in enumerate(orgs) if o['id'] == org_id), -1)
+    
+    if org_idx == -1:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    org = orgs[org_idx]
+    
+    if slack_id in org['admins']:
+        org['admins'].remove(slack_id)
+    if slack_id in org['users']:
+        org['users'].remove(slack_id)
+        
+    orgs[org_idx] = org
+    save_organizations(orgs)
+    return {"status": "removed"}
+
+@app.get("/api/v1/slack/profile/{slack_id}")
+async def get_profile(slack_id: str, response: Response, user: dict = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "private, max-age=86400"
+    return get_slack_profile(slack_id)
