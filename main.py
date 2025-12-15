@@ -772,21 +772,7 @@ async def auth_callback(request: Request):
         if not is_authorized(slack_id):
              return HTMLResponse(
                  f"""
-                 <html>
-                    <head>
-                        <title>Airlock | Access Denied</title>
-                        <meta http-equiv="refresh" content="5;url=https://forms.hackclub.com/airlock?id={slack_id}" />
-                        <style>
-                            body {{ font-family: sans-serif; padding: 40px; text-align: center; }}
-                        </style>
-                    </head>
-                    <body>
-                        <h1>Access Denied</h1>
-                        <p>User <strong>{slack_id}</strong> is not authorized to use Airlock.</p>
-                        <p>Redirecting you to the access request form in 5 seconds...</p>
-                        <p><a href="https://forms.hackclub.com/airlock?id={slack_id}">Click here if you are not redirected</a></p>
-                    </body>
-                 </html>
+                 <title>Airlock | Access Denied</title><style>@font-face{{font-family:'Phantom Sans';src:url(https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff) format('woff'),url(https://assets.hackclub.com/fonts/Phantom_Sans_0.7/Bold.woff2) format('woff2');font-weight:700;font-style:normal;font-display:swap}}body{{font-family:sans-serif;margin:0;padding:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background-color:#f4f4f4;color:#333}}.container{{background:#fff;padding:2.5rem;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,.1);max-width:700px;margin:40px 20px}}h1{{font-family:'Phantom Sans',sans-serif;color:#ec3750;margin-top:0;margin-bottom:1rem}}p{{line-height:1.6;margin:1rem 0}}ul{{text-align:left;line-height:1.8;margin:1.5rem 0;padding-left:1.5rem}}li{{margin-bottom:1rem;padding-left:.5rem}}strong{{color:#ec3750;font-weight:600}}a{{display:inline-block;background-color:#ec3750;color:#fff;text-decoration:none;padding:12px 24px;border-radius:4px;margin-top:1.5rem;font-family:'Phantom Sans',sans-serif;transition:background-color .2s}}a:hover{{background-color:#d12e43}}</style><div class=container><h1>Access Denied</h1><p>User <strong>{slack_id}</strong> is not authorized to use Airlock.<p>There are a few possible reasons for this:<ul><li>You shouldn't be here, but you saw Hack Club page with log in screen and you clicked the button.<li>You are a reviewer and have a reason to use Airlock, but either you haven't been added to your organization or your organization has not been created yet. If this is the case, please contact the admin of your Airlock Organization.<li>You are the lead reviewer/hq contact/something else on your YSWS/event. But you don't have an organization set up on Airlock yet. If this is the case, please contact @Carlos on Slack or fill out the form below.<li>You do have access to Airlock, but you are logged in with the wrong Slack ID or the wrong Slack ID has been added to your organization. If this is the case, please confirm <strong>{slack_id}</strong> is the correct Slack ID.</ul><p><a href="https://forms.hackclub.com/airlock?id={slack_id}">Click here to request an organization on Airlock</a></div>
                  """,
                  status_code=403
              )
