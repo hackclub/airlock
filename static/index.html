@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <title>Airlock</title>
     <style>
         @font-face {
@@ -132,6 +133,13 @@
             <input type="text" id="repo-url" placeholder="https://github.com/owner/repo" required>
             <button type="submit">Start Session</button>
         </form>
+        <div id="popup-warning" class="hidden" style="background: #fff3cd; color: #856404; padding: 1rem; margin-top: 1rem; border-radius: 4px; border: 1px solid #ffeeba;">
+            <strong>Popup Blocked!</strong> The session is ready, but your browser blocked the window.
+            <br>
+            <a id="manual-launch-btn" href="#" target="_blank" style="background: #ec3750; color: white; padding: 5px 10px; text-decoration: none; border-radius: 4px; display: inline-block; margin-top: 5px;">Open Session</a>
+            <br><br>
+            <small>Please allow popups for this site to open sessions automatically.</small>
+        </div>
         <div id="output"></div>
     </div>
     
@@ -154,6 +162,21 @@
         const mainFooter = document.getElementById('main-footer');
         const footerLoginInfo = document.getElementById('footer-login-info');
         const loginInfoContainer = document.getElementById('login-info-container');
+        const popupWarning = document.getElementById('popup-warning');
+        const manualLaunchBtn = document.getElementById('manual-launch-btn');
+
+        let isSessionLoading = false;
+
+        window.addEventListener('beforeunload', (e) => {
+            if (isSessionLoading) {
+                // Show warning if session is loading
+                e.preventDefault();
+                // Custom message is not shown in most modern browsers, but we set it anyway
+                const msg = "Your session is currently being created. Since the process has started, the session will be created regardless of whether you stay on this page. Please wait for it to complete.";
+                e.returnValue = msg;
+                return msg;
+            }
+        });
 
         // Check auth status on load
         checkAuth();
@@ -211,14 +234,19 @@
 
         sessionForm.addEventListener('submit', async (e) => {
             e.preventDefault();
+            if (isSessionLoading) return;
+
+            isSessionLoading = true;
             const repoUrl = document.getElementById('repo-url').value;
             outputDiv.style.display = 'block';
             outputDiv.textContent = 'Initializing...\n';
+            popupWarning.classList.add('hidden');
 
             try {
                 const res = await fetch(`/api/v1/getSession?repo_url=${encodeURIComponent(repoUrl)}`);
                 
                 if (res.status === 401) {
+                    isSessionLoading = false;
                     alert('Session expired. Please login again.');
                     window.location.href = '/login';
                     return;
@@ -227,6 +255,7 @@
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
                 let fullText = '';
+                let sessionOpened = false;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -236,17 +265,25 @@
                     outputDiv.textContent += text;
                     outputDiv.scrollTop = outputDiv.scrollHeight;
 
-                    if (!fullText.includes("OPENED_SESSION")) {
+                    if (!sessionOpened) {
                          const match = fullText.match(/\[SUCCESS\] Session: (https?:\/\/[^\s]+)/);
                          if (match) {
                              const url = match[1];
-                             fullText += " OPENED_SESSION"; 
-                             window.open(url, '_blank');
+                             sessionOpened = true; 
+                             
+                             const win = window.open(url, '_blank');
+                             if (!win || win.closed || typeof win.closed == 'undefined') {
+                                 popupWarning.classList.remove('hidden');
+                                 manualLaunchBtn.href = url;
+                             }
+                             isSessionLoading = false;
                          }
                     }
                 }
             } catch (e) {
                 outputDiv.textContent += `\nError: ${e.message}`;
+            } finally {
+                isSessionLoading = false;
             }
         });
     </script>

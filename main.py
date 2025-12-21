@@ -340,7 +340,7 @@ async def pre_analyze_project(context):
     """
     
     payload = {
-        "model": "google/gemini-2.5-flash-lite-preview-09-2025",
+        "model": "google/gemini-3-flash-preview",
         "messages": [{"role": "system", "content": prompt}],
         "temperature": 0.5
     }
@@ -360,11 +360,11 @@ async def pre_analyze_project(context):
         logger.error(f"Pre-analysis failed: {e}")
         return {"difficulty": "easy", "tech_stack": "Unknown", "files_to_read": []}
 
-async def analyze_with_ai_data(context, file_contents="", model_id="z-ai/glm-4.6"):
+async def analyze_with_ai_data(context, file_contents="", model_id="google/gemini-3-flash-preview"):
     # Determine retries based on model (easy/hard proxy)
-    # easy (glm-4.6) -> 2 retries (total 3 attempts)
-    # hard (gemini-3) -> 1 retry (total 2 attempts)
-    max_retries = 2 if "glm" in model_id else 1
+    # easy (gemini-3-flash) -> 2 retries (total 3 attempts)
+    # hard (gemini-3-pro) -> 1 retry (total 2 attempts)
+    max_retries = 2 if "flash" in model_id else 1
     
     prompt = f"""
     Context:
@@ -710,13 +710,19 @@ async def get_org_admin_user(user: dict = Depends(get_current_user)):
 async def root():
     with open("static/index.html", "r") as f:
         html_content = f.read()
-    return HTMLResponse(content=html_content, status_code=200)
+    return HTMLResponse(content=html_content, status_code=200, headers={"Cache-Control": "public, max-age=600, s-maxage=60, stale-while-revalidate=3600"})
+
+@app.get("/favicon.svg")
+async def favicon():
+    with open("static/icon-rounded.svg", "r") as f:
+        svg_content = f.read()
+    return Response(content=svg_content, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=604800"})
 
 @app.get("/admin")
 async def admin_page():
     with open("static/admin.html", "r") as f:
         html_content = f.read()
-    return HTMLResponse(content=html_content, status_code=200)
+    return HTMLResponse(content=html_content, status_code=200, headers={"Cache-Control": "public, max-age=600, s-maxage=60, stale-while-revalidate=3600"})
 
 @app.get("/login")
 async def login(request: Request):
@@ -828,7 +834,7 @@ async def get_session(repo_url: str, user: dict = Depends(get_current_user)):
                 return
 
             # Pre-analysis
-            yield "[*] Inspecting the project... (google/gemini-2.5-flash-lite)\n"
+            yield "[*] Inspecting the project... (google/gemini-3-flash)\n"
             try:
                 pre_analysis = await pre_analyze_project(context)
                 tech_stack = pre_analysis.get('tech_stack', 'Unknown')
@@ -860,7 +866,7 @@ async def get_session(repo_url: str, user: dict = Depends(get_current_user)):
                 additional_content = "\n".join(file_contents)
 
             # Determine model
-            model_id = "z-ai/glm-4.6"
+            model_id = "google/gemini-3-flash-preview"
             if difficulty == "hard":
                 model_id = "google/gemini-3-pro-preview"
             
