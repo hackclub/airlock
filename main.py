@@ -340,7 +340,7 @@ async def pre_analyze_project(context):
     """
     
     payload = {
-        "model": "google/gemini-flash-latest",
+        "model": "google/gemini-3-flash-preview",
         "messages": [{"role": "system", "content": prompt}],
         "temperature": 0.5
     }
@@ -360,10 +360,10 @@ async def pre_analyze_project(context):
         logger.error(f"Pre-analysis failed: {e}")
         return {"difficulty": "easy", "tech_stack": "Unknown", "files_to_read": []}
 
-async def analyze_with_ai_data(context, file_contents="", model_id="google/gemini-flash-latest"):
+async def analyze_with_ai_data(context, file_contents="", model_id="google/gemini-3-flash-preview"):
     # Determine retries based on model (easy/hard proxy)
     # easy (gemini-3-flash) -> 2 retries (total 3 attempts)
-    # hard (gemini-3-pro) -> 1 retry (total 2 attempts)
+    # hard (claude-opus-latest) -> 1 retry (total 2 attempts)
     max_retries = 2 if "flash" in model_id else 1
     
     prompt = f"""
@@ -834,7 +834,7 @@ async def get_session(repo_url: str, user: dict = Depends(get_current_user)):
                 return
 
             # Pre-analysis
-            yield "[*] Inspecting the project... (google/gemini-flash-latest)\n"
+            yield "[*] Inspecting the project... (google/gemini-3-flash)\n"
             try:
                 pre_analysis = await pre_analyze_project(context)
                 tech_stack = pre_analysis.get('tech_stack', 'Unknown')
@@ -866,9 +866,9 @@ async def get_session(repo_url: str, user: dict = Depends(get_current_user)):
                 additional_content = "\n".join(file_contents)
 
             # Determine model
-            model_id = "google/gemini-flash-latest"
+            model_id = "google/gemini-3-flash-preview"
             if difficulty == "hard":
-                model_id = "google/gemini-3-pro-preview"
+                model_id = "~anthropic/claude-opus-latest"
             
             yield f"[*] Analyzing with AI... ({model_id})\n"
             
